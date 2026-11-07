@@ -1,6 +1,7 @@
 volumes:
   pgdata:
   storage-data:
+  mlflow-auth-data:
 
 services:
   postgres:
@@ -13,8 +14,9 @@ services:
       PGPORT: ${PGPORT}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - ${PGPORT}:${PGPORT}
+    # Internal only — do not publish to the host.
+    expose:
+      - ${PGPORT}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -p ${PGPORT}"]
       interval: 5s
@@ -31,9 +33,10 @@ services:
       RUSTFS_ACCESS_KEY: ${AWS_ACCESS_KEY_ID:-s3admin}
       RUSTFS_SECRET_KEY: ${AWS_SECRET_ACCESS_KEY:-s3admin}
       RUSTFS_CONSOLE_ENABLE: ${RUSTFS_CONSOLE_ENABLE:-true}
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    # Internal only — do not publish S3/console ports to the host.
+    expose:
+      - "9000"
+      - "9001"
     volumes:
       - storage-data:/data
     restart: unless-stopped
@@ -92,22 +95,42 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       MLFLOW_S3_IGNORE_TLS: "true"
 
-      # Server host/port
+      # Server host/port (0.0.0.0 inside the container; host publish is loopback-only)
       MLFLOW_HOST: ${MLFLOW_HOST}
       MLFLOW_PORT: ${MLFLOW_PORT}
+
+      # Basic auth (required)
+      MLFLOW_AUTH_CONFIG_PATH: /etc/mlflow/basic_auth.ini
+      MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:-admin}
+      MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD}
+      MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY}
+    volumes:
+      - ./basic_auth.ini:/etc/mlflow/basic_auth.ini:ro
+      - mlflow-auth-data:/auth
     command:
       - /bin/bash
       - -c
       - |
+        set -euo pipefail
+        if [ -z "${MLFLOW_AUTH_ADMIN_PASSWORD:-}" ]; then
+          echo "ERROR: MLFLOW_AUTH_ADMIN_PASSWORD must be set (no default)." >&2
+          exit 1
+        fi
+        if [ -z "${MLFLOW_FLASK_SERVER_SECRET_KEY:-}" ]; then
+          echo "ERROR: MLFLOW_FLASK_SERVER_SECRET_KEY must be set (no default)." >&2
+          exit 1
+        fi
         pip install --no-cache-dir "psycopg[binary]" psycopg2-binary boto3
         mlflow server \
+          --app-name basic-auth \
           --backend-store-uri "${MLFLOW_BACKEND_STORE_URI}" \
           --artifacts-destination "${MLFLOW_ARTIFACTS_DESTINATION}" \
           --serve-artifacts \
           --host "${MLFLOW_HOST}" \
           --port "${MLFLOW_PORT}"
     ports:
-      - "${MLFLOW_PORT}:${MLFLOW_PORT}"
+      # Loopback only — not reachable from other hosts without a tunnel/proxy.
+      - "127.0.0.1:${MLFLOW_PORT}:${MLFLOW_PORT}"
     healthcheck:
       test:
         [

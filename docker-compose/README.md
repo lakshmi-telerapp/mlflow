@@ -50,7 +50,17 @@ Copy and customize the environment file:
 cp .env.dev.example .env
 ```
 
-The `.env` file defines:
+**Required before first start (security):** set strong values in `.env`:
+
+```env
+MLFLOW_AUTH_ADMIN_USERNAME=admin
+MLFLOW_AUTH_ADMIN_PASSWORD=<strong-unique-password>
+MLFLOW_FLASK_SERVER_SECRET_KEY=<long-random-secret>
+```
+
+The MLflow container **exits immediately** if either password/secret is empty. Do not commit `.env`.
+
+The `.env` file also defines:
 
 - MLflow server port
 - PostgreSQL credentials
@@ -79,12 +89,19 @@ The `.env` file defines:
 
 - **MLflow**
   - `MLFLOW_VERSION=latest`
-  - `MLFLOW_HOST=0.0.0.0`
+  - `MLFLOW_HOST=0.0.0.0` (inside the container; host publish is loopback-only)
   - `MLFLOW_PORT=5000`
   - `MLFLOW_BACKEND_STORE_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}`
   - `MLFLOW_ARTIFACTS_DESTINATION=s3://${S3_BUCKET}`
   - `MLFLOW_S3_ENDPOINT_URL=http://storage:9000`
+  - `MLFLOW_AUTH_ADMIN_USERNAME` / `MLFLOW_AUTH_ADMIN_PASSWORD` (required)
+  - `MLFLOW_FLASK_SERVER_SECRET_KEY` (required)
 
+### Network hardening
+
+- MLflow is published as `127.0.0.1:${MLFLOW_PORT}` only (not reachable from other machines without SSH tunnel or a local reverse proxy).
+- Postgres and RustFS are **not** published on the host; they are reachable only on the Docker network.
+- Auth is enabled via `mlflow server --app-name basic-auth` and `basic_auth.ini` (user DB on the `mlflow-auth-data` volume).
 ---
 
 ## 3. Launch the Stack
@@ -120,9 +137,18 @@ docker compose logs -f
 
 Once running:
 
-- Open `http://localhost:5000` (or the port defined in `.env`)
+- Open `http://127.0.0.1:5000` (or the port defined in `.env`) and sign in with the admin username/password from `.env`.
+- Unauthenticated API/UI requests return **401**.
 
-You can now log runs, metrics, artifacts, and models to your local MLflow instance.
+Client / training scripts:
+
+```bash
+export MLFLOW_TRACKING_URI=http://127.0.0.1:5000
+export MLFLOW_TRACKING_USERNAME=admin
+export MLFLOW_TRACKING_PASSWORD='<same-as-MLFLOW_AUTH_ADMIN_PASSWORD>'
+```
+
+After the first successful boot, the admin user already exists in the auth DB volume; changing `MLFLOW_AUTH_ADMIN_PASSWORD` in `.env` alone does **not** rotate it — use the MLflow auth update-password API (or recreate the `mlflow-auth-data` volume in a non-production reset).
 
 ---
 
@@ -227,13 +253,10 @@ docker compose up -d
 
 ## Next Steps
 
-- Point your training scripts to this server:
-  ```bash
-  export MLFLOW_TRACKING_URI=http://localhost:5000
-  ```
+- Point your training scripts to this server with tracking basic-auth (see §4).
 - Start logging runs with `mlflow.start_run()` (Python) or the MLflow CLI.
-- Customize the `.env` and `docker-compose.yml` to fit your local workflow (e.g., change image tags, add volumes, etc.).
+- Customize the `.env` and `docker-compose.yml` to fit your local workflow (e.g., change image tags, add a reverse proxy with TLS in front of loopback).
 
 ---
 
-**You now have a fully local MLflow stack with persistent metadata and artifact storage—ideal for development and experimentation.**
+**You now have a local MLflow stack with basic-auth, loopback-only UI publish, and internal-only Postgres/RustFS.**
