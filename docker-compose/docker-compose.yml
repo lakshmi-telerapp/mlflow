@@ -120,7 +120,8 @@ services:
           echo "ERROR: MLFLOW_FLASK_SERVER_SECRET_KEY must be set (no default)." >&2
           exit 1
         fi
-        pip install --no-cache-dir "psycopg[binary]" psycopg2-binary boto3
+        # mlflow[auth] pulls Flask-WTF required by --app-name basic-auth
+        pip install --no-cache-dir "psycopg[binary]" psycopg2-binary boto3 "mlflow[auth]"
         mlflow server \
           --app-name basic-auth \
           --backend-store-uri "${MLFLOW_BACKEND_STORE_URI}" \
