@@ -101,7 +101,8 @@ The `.env` file also defines:
 
 - MLflow is published as `127.0.0.1:${MLFLOW_PORT}` only (not reachable from other machines without SSH tunnel or a local reverse proxy).
 - Postgres and RustFS are **not** published on the host; they are reachable only on the Docker network.
-- Auth is enabled via `mlflow server --app-name basic-auth` and `basic_auth.ini` (user DB on the `mlflow-auth-data` volume).
+- Auth is enabled via `mlflow server --app-name basic-auth`. Startup writes `/auth/basic_auth.ini` and stores users in `sqlite:////auth/basic_auth.db` on the `mlflow-auth-data` volume (works even when a host bind-mount for the ini is missing, e.g. Coolify).
+- If you previously set `MLFLOW_AUTH_CONFIG_PATH` to a path that does not exist, remove it or point it at `/auth/basic_auth.ini` — a missing file causes `KeyError: 'mlflow'`.
 ---
 
 ## 3. Launch the Stack

@@ -99,13 +99,13 @@ services:
       MLFLOW_HOST: ${MLFLOW_HOST}
       MLFLOW_PORT: ${MLFLOW_PORT}
 
-      # Basic auth (required)
-      MLFLOW_AUTH_CONFIG_PATH: /etc/mlflow/basic_auth.ini
+      # Basic auth (required). Config is written to the /auth volume at start so
+      # Coolify/deploys without a bind-mounted ini still get a valid [mlflow] section.
+      MLFLOW_AUTH_CONFIG_PATH: /auth/basic_auth.ini
       MLFLOW_AUTH_ADMIN_USERNAME: ${MLFLOW_AUTH_ADMIN_USERNAME:-admin}
       MLFLOW_AUTH_ADMIN_PASSWORD: ${MLFLOW_AUTH_ADMIN_PASSWORD}
       MLFLOW_FLASK_SERVER_SECRET_KEY: ${MLFLOW_FLASK_SERVER_SECRET_KEY}
     volumes:
-      - ./basic_auth.ini:/etc/mlflow/basic_auth.ini:ro
       - mlflow-auth-data:/auth
     command:
       - /bin/bash
@@ -120,6 +120,20 @@ services:
           echo "ERROR: MLFLOW_FLASK_SERVER_SECRET_KEY must be set (no default)." >&2
           exit 1
         fi
+        mkdir -p /auth
+        # Always materialize a valid ini (ConfigParser KeyError: 'mlflow' if path missing/empty).
+        python - <<'PY'
+        from pathlib import Path
+        Path("/auth/basic_auth.ini").write_text(
+            "[mlflow]\n"
+            "default_permission = READ\n"
+            "database_uri = sqlite:////auth/basic_auth.db\n"
+            "admin_username = admin\n"
+            "authorization_function = mlflow.server.auth:authenticate_request_basic_auth\n"
+            "grant_default_workspace_access = false\n"
+        )
+        PY
+        export MLFLOW_AUTH_CONFIG_PATH=/auth/basic_auth.ini
         # mlflow[auth] pulls Flask-WTF required by --app-name basic-auth
         pip install --no-cache-dir "psycopg[binary]" psycopg2-binary boto3 "mlflow[auth]"
         mlflow server \
